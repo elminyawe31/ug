@@ -1,10 +1,19 @@
-FROM kasmweb/ubuntu-jammy-desktop:1.18.0
+FROM docker.io/kasmweb/ubuntu-jammy-desktop:1.18.0
 
 USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV VNC_PW=12345678
 ENV PORT=6901
+
+# =========================================================
+# REMOVE BROKEN THIRD-PARTY APT REPOSITORIES
+# =========================================================
+RUN rm -f \
+    /etc/apt/sources.list.d/hashicorp.list \
+    /etc/apt/sources.list.d/hashicorp.sources \
+    /etc/apt/sources.list.d/terraform.list \
+    2>/dev/null || true
 
 # =========================================================
 # SYSTEM PACKAGES
@@ -23,11 +32,10 @@ RUN apt-get update && \
         dbus-x11 \
         xauth \
         xvfb \
-        && \
-    rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 # =========================================================
-# KASM USER
+# KASM USER - FULL SUDO
 # =========================================================
 RUN echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/kasm-user && \
     chmod 440 /etc/sudoers.d/kasm-user
@@ -41,7 +49,7 @@ RUN mkdir -p /etc/apt/keyrings && \
     echo "deb [signed-by=/etc/apt/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" \
         > /etc/apt/sources.list.d/brave-browser-release.list && \
     apt-get update && \
-    apt-get install -y brave-browser && \
+    apt-get install -y --no-install-recommends brave-browser && \
     rm -rf /var/lib/apt/lists/*
 
 # =========================================================
@@ -53,14 +61,14 @@ RUN curl -L \
     chmod +x /usr/local/bin/cloudflared
 
 # =========================================================
-# CLOUDFLARE TOKEN
+# CLOUDFLARE TUNNEL TOKEN
 # =========================================================
-ENV CF_TUNNEL_TOKEN="eyJhIjoiMGZhYWYyYzU1YzJjNmRiMzM4Yzk3ZDU1YTE4MmNiMzM4Yzk3ZDU1YTE4MmNiNTkiLCJ0IjoiZGUzNGEyYzYtMTFhNy00NjdjLWI5ZjMtMGUxYTdkYjA0M2ZhIiwicyI6IllqZGtZamMyTkdRdFpXSTJNaTAwWkRjNExXSTNZV1V0WXpZMll6SXlNemszTVRrMCJ9"
+ENV CF_TUNNEL_TOKEN="eyJhIjoiMGZhYWYyYzU1YzJjNmRiMzM4Yzk3ZDU1YTE4MmNiNTkiLCJ0IjoiZGUzNGEyYzYtMTFhNy00NjdjLWI5ZjMtMGUxYTdkYjA0M2ZhIiwicyI6IllqZGtZamMyTkdRdFpXSTJNaTAwWkRjNExXSTNZV1V0WXpZMll6SXlNemszTVRrMCJ9"
 
 # =========================================================
-# SUPERVISOR CONFIG
+# SUPERVISOR
 # =========================================================
-RUN mkdir -p /var/log/supervisor /etc/supervisor/conf.d
+RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor
 
 RUN cat > /etc/supervisor/conf.d/kasm-cloudflare.conf <<'EOF'
 [supervisord]
@@ -99,7 +107,7 @@ killasgroup=true
 EOF
 
 # =========================================================
-# STARTUP SCRIPT
+# START SCRIPT
 # =========================================================
 RUN cat > /usr/local/bin/start-all.sh <<'EOF'
 #!/bin/bash
@@ -108,20 +116,22 @@ echo "================================================="
 echo " ELMINYAWE KASM + CLOUDFLARE"
 echo "================================================="
 
-echo "[1/4] Runtime information"
+echo "[INFO] Running as:"
 id
-uname -a
 
-echo "[2/4] Starting Supervisor"
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/kasm-cloudflare.conf
+echo "[INFO] Starting Supervisor..."
+
+exec /usr/bin/supervisord \
+    -c /etc/supervisor/conf.d/kasm-cloudflare.conf
 EOF
 
 RUN chmod +x /usr/local/bin/start-all.sh
 
-# Railway should run this container as root
+# =========================================================
+# RAILWAY
+# =========================================================
 USER root
 
-# Kasm listens internally on 6901.
 EXPOSE 6901
 
 ENTRYPOINT ["/usr/local/bin/start-all.sh"]
