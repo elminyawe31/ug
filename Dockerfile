@@ -2,18 +2,30 @@ FROM ghcr.io/flaresolverr/flaresolverr:latest
 
 USER root
 
-# Install ELMINYWAE API dependencies
-RUN pip install --no-cache-dir fastapi uvicorn requests
+# ============================================================
+# ELMINYWAE API dependencies
+# ============================================================
+
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    requests
+
 
 # ============================================================
 # ELMINYWAE API
 # ============================================================
+
 RUN cat > /app/elminywae_api.py <<'PY'
 import requests
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+
+# FlareSolverr internal address
 BACKEND = "http://127.0.0.1:8080"
+
 
 app = FastAPI(
     title="ELMINYWAE",
@@ -21,8 +33,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+# ============================================================
+# HOME
+# ============================================================
+
 @app.get("/")
 def root():
+
     return {
         "status": "online",
         "service": "ELMINYWAE",
@@ -31,19 +49,26 @@ def root():
         "version": "1.0.0"
     }
 
+
+# ============================================================
+# HEALTH
+# ============================================================
+
 @app.get("/health")
 def health():
+
     try:
-        r = requests.get(
+
+        response = requests.get(
             f"{BACKEND}/health",
             timeout=10
         )
 
         try:
-            data = r.json()
+            data = response.json()
         except Exception:
             data = {
-                "response": r.text
+                "response": response.text
             }
 
         return {
@@ -54,23 +79,33 @@ def health():
         }
 
     except Exception as e:
+
         return JSONResponse(
             status_code=503,
             content={
                 "status": "error",
                 "service": "ELMINYWAE",
                 "developer": "ELMINYWAE",
-                "error": str(e)
+                "error": "FlareSolverr is unavailable",
+                "details": str(e)
             }
         )
 
 
+# ============================================================
+# FLARESOLVERR API
+# ============================================================
+
 @app.post("/v1")
 async def v1(request: Request):
 
+    # Read JSON
     try:
+
         body = await request.json()
+
     except Exception:
+
         return JSONResponse(
             status_code=400,
             content={
@@ -81,39 +116,14 @@ async def v1(request: Request):
             }
         )
 
+
+    # Send request to FlareSolverr
     try:
+
         response = requests.post(
             f"{BACKEND}/v1",
             json=body,
             timeout=180
-        )
-
-        try:
-            data = response.json()
-        except Exception:
-            return JSONResponse(
-                status_code=response.status_code,
-                content={
-                    "service": "ELMINYWAE",
-                    "developer": "ELMINYWAE",
-                    "response": response.text
-                }
-            )
-
-        if isinstance(data, dict):
-
-            data["service"] = "ELMINYWAE"
-            data["developer"] = "ELMINYWAE"
-
-            if isinstance(data.get("msg"), str):
-                data["msg"] = data["msg"].replace(
-                    "FlareSolverr",
-                    "ELMINYWAE Solver"
-                )
-
-        return JSONResponse(
-            status_code=response.status_code,
-            content=data
         )
 
     except requests.exceptions.RequestException as e:
@@ -129,25 +139,72 @@ async def v1(request: Request):
             }
         )
 
-    except Exception as e:
+
+    # Parse response
+    try:
+
+        data = response.json()
+
+    except Exception:
 
         return JSONResponse(
-            status_code=500,
+            status_code=response.status_code,
             content={
-                "status": "error",
                 "service": "ELMINYWAE",
                 "developer": "ELMINYWAE",
-                "error": str(e)
+                "response": response.text
             }
         )
+
+
+    # Add ELMINYWAE branding
+    if isinstance(data, dict):
+
+        data["service"] = "ELMINYWAE"
+        data["developer"] = "ELMINYWAE"
+
+        if isinstance(data.get("msg"), str):
+
+            data["msg"] = data["msg"].replace(
+                "FlareSolverr",
+                "ELMINYWAE Solver"
+            )
+
+
+    return JSONResponse(
+        status_code=response.status_code,
+        content=data
+    )
+
+
+# ============================================================
+# ENDPOINT INFO
+# ============================================================
+
+@app.get("/api")
+def api_info():
+
+    return {
+        "name": "ELMINYWAE",
+        "developer": "ELMINYWAE",
+        "status": "online",
+        "flaresolverr": "connected",
+        "endpoints": {
+            "home": "/",
+            "health": "/health",
+            "solver": "/v1"
+        }
+    }
 PY
 
 
 # ============================================================
-# START SCRIPT
+# STARTUP SCRIPT
 # ============================================================
+
 RUN cat > /app/start_elminywae.sh <<'SH'
 #!/bin/sh
+
 
 echo ""
 echo "=========================================="
@@ -156,9 +213,10 @@ echo "          Powered by FlareSolverr"
 echo "=========================================="
 echo ""
 
-# ------------------------------------------------------------
-# FlareSolverr
-# ------------------------------------------------------------
+
+# ============================================================
+# Start FlareSolverr
+# ============================================================
 
 echo "[ELMINYWAE] Starting FlareSolverr..."
 echo "[ELMINYWAE] FlareSolverr Port: 8080"
@@ -166,35 +224,55 @@ echo "[ELMINYWAE] FlareSolverr Port: 8080"
 export HOST=0.0.0.0
 export PORT=8080
 
+
 /usr/bin/dumb-init -- \
     /usr/local/bin/python \
     -u \
     /app/flaresolverr.py &
 
+
 FLARE_PID=$!
 
+
 echo "[ELMINYWAE] FlareSolverr PID: $FLARE_PID"
-
-# ------------------------------------------------------------
-# Wait for FlareSolverr
-# ------------------------------------------------------------
-
 echo "[ELMINYWAE] Waiting for FlareSolverr..."
+
+
+
+# ============================================================
+# Wait for FlareSolverr
+# ============================================================
 
 i=0
 
 while [ $i -lt 120 ]; do
 
-    if wget -q \
+    # Check if process is still alive
+    if ! kill -0 "$FLARE_PID" 2>/dev/null; then
+
+        echo ""
+        echo "[ELMINYWAE] ERROR: FlareSolverr stopped!"
+        echo ""
+
+        exit 1
+
+    fi
+
+
+    # Check HTTP server
+    if wget \
+        -q \
         -O /dev/null \
-        http://127.0.0.1:8080/health \
+        http://127.0.0.1:8080/ \
         2>/dev/null
     then
+
         echo ""
         echo "[ELMINYWAE] FlareSolverr is READY!"
-        echo ""
         break
+
     fi
+
 
     i=$((i + 1))
 
@@ -203,32 +281,23 @@ while [ $i -lt 120 ]; do
 done
 
 
-# ------------------------------------------------------------
-# Check FlareSolverr
-# ------------------------------------------------------------
 
-if ! wget -q \
-    -O /dev/null \
-    http://127.0.0.1:8080/health \
-    2>/dev/null
-then
+# ============================================================
+# Final process check
+# ============================================================
+
+if ! kill -0 "$FLARE_PID" 2>/dev/null; then
 
     echo ""
-    echo "[ELMINYWAE] ERROR!"
-    echo "[ELMINYWAE] FlareSolverr failed to start."
+    echo "[ELMINYWAE] ERROR: FlareSolverr is not running!"
     echo ""
-
-    kill "$FLARE_PID" 2>/dev/null
 
     exit 1
 
 fi
 
 
-# ------------------------------------------------------------
-# Start ELMINYWAE
-# ------------------------------------------------------------
-
+echo ""
 echo "=========================================="
 echo "          ELMINYWAE IS READY"
 echo "=========================================="
@@ -239,8 +308,16 @@ echo ""
 echo "[ELMINYWAE] Endpoints:"
 echo "[ELMINYWAE] /"
 echo "[ELMINYWAE] /health"
+echo "[ELMINYWAE] /api"
 echo "[ELMINYWAE] /v1"
 echo ""
+echo "=========================================="
+echo ""
+
+
+# ============================================================
+# Start ELMINYWAE API
+# ============================================================
 
 exec /usr/local/bin/python \
     -m uvicorn \
@@ -254,7 +331,7 @@ RUN chmod +x /app/start_elminywae.sh
 
 
 # ============================================================
-# ENVIRONMENT
+# FlareSolverr configuration
 # ============================================================
 
 ENV LOG_LEVEL=info
@@ -263,9 +340,12 @@ ENV CAPTCHA_SOLVER=none
 ENV LANG=en
 ENV TZ=UTC
 
+ENV HOST=0.0.0.0
+ENV PORT=8080
+
 
 # ============================================================
-# PORTS
+# Ports
 # ============================================================
 
 EXPOSE 8080
@@ -273,7 +353,7 @@ EXPOSE 8191
 
 
 # ============================================================
-# START
+# Start
 # ============================================================
 
 CMD ["/app/start_elminywae.sh"]
