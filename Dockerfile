@@ -5,18 +5,16 @@ USER root
 ENV DEBIAN_FRONTEND=noninteractive
 
 # =========================================================
-# Remove broken HashiCorp repository
+# Remove problematic repository
 # =========================================================
-
 RUN rm -f \
     /etc/apt/sources.list.d/hashicorp.list \
     /etc/apt/sources.list.d/hashicorp.sources \
     /etc/apt/sources.list.d/hashicorp*.list
 
 # =========================================================
-# System packages
+# Install required packages
 # =========================================================
-
 RUN apt-get update && \
     apt-get install -y \
         sudo \
@@ -44,17 +42,15 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # =========================================================
-# Passwordless sudo
+# Full sudo for kasm-user
 # =========================================================
-
 RUN echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' \
     > /etc/sudoers.d/kasm-user && \
     chmod 440 /etc/sudoers.d/kasm-user
 
 # =========================================================
-# Brave
+# Brave Browser
 # =========================================================
-
 RUN curl -fsS https://dl.brave.com/install.sh | bash && \
     apt-get update && \
     apt-get install -y brave-browser && \
@@ -64,7 +60,6 @@ RUN curl -fsS https://dl.brave.com/install.sh | bash && \
 # =========================================================
 # Cloudflared
 # =========================================================
-
 RUN curl -L \
     --fail \
     --show-error \
@@ -74,40 +69,37 @@ RUN curl -L \
     chmod +x /usr/local/bin/cloudflared
 
 # =========================================================
+# Make the old Cloudflare origin hostname resolve locally
+#
+# Your Cloudflare tunnel currently uses:
+# https://ubuntu-desktop:6901
+#
+# Since both services are now in the same container,
+# point ubuntu-desktop -> localhost.
+# =========================================================
+RUN echo "127.0.0.1 ubuntu-desktop" >> /etc/hosts
+
+# =========================================================
 # Cloudflare Tunnel Token
 # =========================================================
-
 ENV CF_TUNNEL_TOKEN="eyJhIjoiMGZhYWYyYzU1YzJjNmRiMzM4Yzk3ZDU1YTE4MmNiNTkiLCJ0IjoiZGUzNGEyYzYtMTFhNy00NjdjLWI5ZjMtMGUxYTdkYjA0M2ZhIiwicyI6IllqZGtZamMyTkdRdFpXSTJNaTAwWkRjNExXSTNZV1V0WXpZMll6SXlNemszTVRrMCJ9"
-
-# =========================================================
-# Kasm startup wrapper
-# =========================================================
-
-RUN cat > /usr/local/bin/start-kasm.sh <<'EOF'
-#!/bin/bash
-
-exec /dockerstartup/kasm_default_profile.sh --tail-log
-EOF
-
-RUN chmod +x /usr/local/bin/start-kasm.sh
 
 # =========================================================
 # Supervisor
 # =========================================================
-
-RUN mkdir -p /etc/supervisor/conf.d
+RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor
 
 RUN cat > /etc/supervisor/conf.d/kasm-cloudflare.conf <<'EOF'
 [supervisord]
 nodaemon=true
-user=root
 logfile=/var/log/supervisord.log
 pidfile=/var/run/supervisord.pid
+loglevel=info
 
 [program:kasm]
-command=/usr/local/bin/start-kasm.sh
+command=/dockerstartup/kasm_default_profile.sh /dockerstartup/vnc_startup.sh /dockerstartup/kasm_startup.sh --wait
 user=kasm-user
-environment=HOME="/home/kasm-user",USER="kasm-user"
+environment=HOME="/home/kasm-user",USER="kasm-user",DISPLAY=":1"
 autostart=true
 autorestart=true
 startsecs=5
@@ -134,18 +126,21 @@ EOF
 # =========================================================
 # Permissions
 # =========================================================
-
 RUN chown -R kasm-user:kasm-user /home/kasm-user
 
 # =========================================================
-# Kasm WebSocket/Web UI
+# Kasm user
 # =========================================================
+USER kasm-user
 
-EXPOSE 6901
+ENV HOME=/home/kasm-user
+
+WORKDIR /home/kasm-user
 
 # =========================================================
-# Start both services
+# Start both Kasm + Cloudflare
 # =========================================================
+USER root
 
 ENTRYPOINT ["/usr/bin/supervisord"]
 CMD ["-c", "/etc/supervisor/conf.d/kasm-cloudflare.conf"]
