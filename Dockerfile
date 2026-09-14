@@ -4,13 +4,11 @@ USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Remove problematic repository
 RUN rm -f \
     /etc/apt/sources.list.d/hashicorp.list \
     /etc/apt/sources.list.d/hashicorp.sources \
     /etc/apt/sources.list.d/hashicorp*.list
 
-# Packages
 RUN apt-get update && \
     apt-get install -y \
         sudo \
@@ -37,19 +35,16 @@ RUN apt-get update && \
         supervisor && \
     rm -rf /var/lib/apt/lists/*
 
-# Full sudo
 RUN echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' \
     > /etc/sudoers.d/kasm-user && \
     chmod 440 /etc/sudoers.d/kasm-user
 
-# Brave
 RUN curl -fsS https://dl.brave.com/install.sh | bash && \
     apt-get update && \
     apt-get install -y brave-browser && \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/brave-browser /usr/local/bin/brave
 
-# Cloudflared
 RUN curl -L \
     --fail \
     --show-error \
@@ -58,10 +53,8 @@ RUN curl -L \
     -o /usr/local/bin/cloudflared && \
     chmod +x /usr/local/bin/cloudflared
 
-# Cloudflare token
 ENV CF_TUNNEL_TOKEN="eyJhIjoiMGZhYWYyYzU1YzJjNmRiMzM4Yzk3ZDU1YTE4MmNiNTkiLCJ0IjoiZGUzNGEyYzYtMTFhNy00NjdjLWI5ZjMtMGUxYTdkYjA0M2ZhIiwicyI6IllqZGtZamMyTkdRdFpXSTJNaTAwWkRjNExXSTNZV1V0WXpZMll6SXlNemszTVRrMCJ9"
 
-# Supervisor configuration
 RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor
 
 RUN cat > /etc/supervisor/conf.d/kasm-cloudflare.conf <<'EOF'
@@ -94,6 +87,16 @@ startretries=20
 priority=20
 stdout_logfile=/var/log/cloudflared.log
 stderr_logfile=/var/log/cloudflared-error.log
+stopasgroup=true
+killasgroup=true
+
+[program:diagnostic]
+command=/bin/bash -c "while true; do echo '===== KASM PORT CHECK ====='; ss -lntp | grep 6901 || true; echo '===== LOCAL HTTPS CHECK ====='; curl -k -s -o /dev/null -w 'HTTP: %%{http_code}\n' https://127.0.0.1:6901 || true; echo '===== CLOUDFLARED LAST LOGS ====='; tail -n 15 /var/log/cloudflared-error.log 2>/dev/null || true; echo '================================'; sleep 10; done"
+autostart=true
+autorestart=true
+priority=30
+stdout_logfile=/dev/stdout
+stderr_logfile=/dev/stderr
 stopasgroup=true
 killasgroup=true
 EOF
