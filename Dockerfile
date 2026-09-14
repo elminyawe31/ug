@@ -4,17 +4,13 @@ USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# =========================================================
 # Remove problematic repository
-# =========================================================
 RUN rm -f \
     /etc/apt/sources.list.d/hashicorp.list \
     /etc/apt/sources.list.d/hashicorp.sources \
     /etc/apt/sources.list.d/hashicorp*.list
 
-# =========================================================
-# Install required packages
-# =========================================================
+# Packages
 RUN apt-get update && \
     apt-get install -y \
         sudo \
@@ -41,25 +37,19 @@ RUN apt-get update && \
         supervisor && \
     rm -rf /var/lib/apt/lists/*
 
-# =========================================================
-# Full sudo for kasm-user
-# =========================================================
+# Full sudo
 RUN echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' \
     > /etc/sudoers.d/kasm-user && \
     chmod 440 /etc/sudoers.d/kasm-user
 
-# =========================================================
-# Brave Browser
-# =========================================================
+# Brave
 RUN curl -fsS https://dl.brave.com/install.sh | bash && \
     apt-get update && \
     apt-get install -y brave-browser && \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/brave-browser /usr/local/bin/brave
 
-# =========================================================
 # Cloudflared
-# =========================================================
 RUN curl -L \
     --fail \
     --show-error \
@@ -68,25 +58,10 @@ RUN curl -L \
     -o /usr/local/bin/cloudflared && \
     chmod +x /usr/local/bin/cloudflared
 
-# =========================================================
-# Make the old Cloudflare origin hostname resolve locally
-#
-# Your Cloudflare tunnel currently uses:
-# https://ubuntu-desktop:6901
-#
-# Since both services are now in the same container,
-# point ubuntu-desktop -> localhost.
-# =========================================================
-RUN echo "127.0.0.1 ubuntu-desktop" >> /etc/hosts
-
-# =========================================================
-# Cloudflare Tunnel Token
-# =========================================================
+# Cloudflare token
 ENV CF_TUNNEL_TOKEN="eyJhIjoiMGZhYWYyYzU1YzJjNmRiMzM4Yzk3ZDU1YTE4MmNiNTkiLCJ0IjoiZGUzNGEyYzYtMTFhNy00NjdjLWI5ZjMtMGUxYTdkYjA0M2ZhIiwicyI6IllqZGtZamMyTkdRdFpXSTJNaTAwWkRjNExXSTNZV1V0WXpZMll6SXlNemszTVRrMCJ9"
 
-# =========================================================
-# Supervisor
-# =========================================================
+# Supervisor configuration
 RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor
 
 RUN cat > /etc/supervisor/conf.d/kasm-cloudflare.conf <<'EOF'
@@ -123,23 +98,10 @@ stopasgroup=true
 killasgroup=true
 EOF
 
-# =========================================================
-# Permissions
-# =========================================================
 RUN chown -R kasm-user:kasm-user /home/kasm-user
-
-# =========================================================
-# Kasm user
-# =========================================================
-USER kasm-user
-
-ENV HOME=/home/kasm-user
 
 WORKDIR /home/kasm-user
 
-# =========================================================
-# Start both Kasm + Cloudflare
-# =========================================================
 USER root
 
 ENTRYPOINT ["/usr/bin/supervisord"]
