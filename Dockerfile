@@ -2,8 +2,8 @@ FROM ghcr.io/flaresolverr/flaresolverr:latest
 
 USER root
 
-# Install ELMINYAWE API dependencies
 RUN pip install --no-cache-dir fastapi uvicorn requests
+
 
 # ============================================================
 # ELMINYAWE API
@@ -13,6 +13,7 @@ RUN cat > /app/elminyawe_api.py <<'PY'
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import requests
+import json
 
 FLARESOLVERR_URL = "http://127.0.0.1:8080"
 
@@ -47,18 +48,17 @@ async def root():
 async def health():
 
     try:
+
         response = requests.get(
             f"{FLARESOLVERR_URL}/health",
             timeout=10
         )
 
-        data = response.json()
-
         return {
             "status": "online",
             "service": "ELMINYAWE",
             "developer": "ELMINYAWE",
-            "flaresolverr": data
+            "flaresolverr": response.json()
         }
 
     except Exception as e:
@@ -75,7 +75,7 @@ async def health():
 
 
 # ============================================================
-# FLARESOLVERR PROXY
+# ELMINYAWE → FLARESOLVERR PROXY
 # ============================================================
 
 @app.post("/v1")
@@ -83,18 +83,42 @@ async def flaresolverr_proxy(request: Request):
 
     try:
 
-        # Get original JSON
-        body = await request.json()
+        # Receive RAW body
+        raw_body = await request.body()
 
-        # Send request to internal FlareSolverr
+        # Parse JSON
+        try:
+
+            body = json.loads(
+                raw_body.decode("utf-8")
+            )
+
+        except Exception as e:
+
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "service": "ELMINYAWE",
+                    "developer": "ELMINYAWE",
+                    "error": "Invalid JSON",
+                    "details": str(e)
+                }
+            )
+
+        # Send JSON to internal FlareSolverr
         response = requests.post(
             f"{FLARESOLVERR_URL}/v1",
             json=body,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            },
             timeout=180
         )
 
-        # Try JSON response
+        # Parse FlareSolverr response
         try:
+
             data = response.json()
 
         except Exception:
@@ -108,7 +132,10 @@ async def flaresolverr_proxy(request: Request):
                 }
             )
 
-        # Add ELMINYAWE branding
+        # ====================================================
+        # ELMINYAWE BRANDING
+        # ====================================================
+
         if isinstance(data, dict):
 
             data["service"] = "ELMINYAWE"
@@ -121,15 +148,28 @@ async def flaresolverr_proxy(request: Request):
                     "ELMINYAWE Solver"
                 )
 
+        # Return original FlareSolverr result
         return JSONResponse(
             status_code=response.status_code,
             content=data
         )
 
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
 
         return JSONResponse(
             status_code=502,
+            content={
+                "service": "ELMINYAWE",
+                "developer": "ELMINYAWE",
+                "error": "FlareSolverr connection failed",
+                "details": str(e)
+            }
+        )
+
+    except Exception as e:
+
+        return JSONResponse(
+            status_code=500,
             content={
                 "service": "ELMINYAWE",
                 "developer": "ELMINYAWE",
@@ -139,7 +179,7 @@ async def flaresolverr_proxy(request: Request):
 
 
 # ============================================================
-# OPTIONAL: FORWARD OTHER METHODS
+# 404
 # ============================================================
 
 @app.api_route(
@@ -153,17 +193,6 @@ async def flaresolverr_proxy(request: Request):
     ]
 )
 async def catch_all(request: Request, path: str):
-
-    # Do not interfere with FastAPI routes
-    if path in ["", "v1", "health"]:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "service": "ELMINYAWE",
-                "developer": "ELMINYAWE",
-                "error": "Not Found"
-            }
-        )
 
     return JSONResponse(
         status_code=404,
@@ -189,10 +218,10 @@ echo "              ELMINYAWE"
 echo "       FlareSolverr API Gateway"
 echo "=============================================="
 echo ""
+
 echo "[ELMINYAWE] Starting FlareSolverr..."
 echo "[ELMINYAWE] Internal FlareSolverr: 127.0.0.1:8080"
 
-# FlareSolverr internal port
 export HOST=127.0.0.1
 export PORT=8080
 
@@ -201,12 +230,37 @@ export PORT=8080
 FLARE_PID=$!
 
 echo "[ELMINYAWE] FlareSolverr PID: $FLARE_PID"
+
+echo "[ELMINYAWE] Waiting for FlareSolverr..."
+
+i=0
+
+while [ $i -lt 60 ]; do
+
+    if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+        echo "[ELMINYAWE] FlareSolverr READY!"
+        break
+    fi
+
+    i=$((i + 1))
+    sleep 1
+
+done
+
+if ! kill -0 "$FLARE_PID" 2>/dev/null; then
+
+    echo "[ELMINYAWE] ERROR: FlareSolverr stopped!"
+
+    exit 1
+
+fi
+
 echo ""
 echo "[ELMINYAWE] Starting ELMINYAWE API..."
-echo "[ELMINYAWE] ELMINYAWE API: 0.0.0.0:8191"
+echo "[ELMINYAWE] API: 0.0.0.0:8191"
+echo "[ELMINYAWE] Solver: 127.0.0.1:8080"
 echo ""
 
-# ELMINYAWE API
 exec /usr/local/bin/python -m uvicorn elminyawe_api:app \
     --host 0.0.0.0 \
     --port 8191
