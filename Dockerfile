@@ -7,7 +7,7 @@ ENV VNC_PW=12345678
 ENV PORT=6901
 
 # =========================================================
-# REMOVE BROKEN THIRD-PARTY APT REPOSITORIES
+# FIX BROKEN APT REPOSITORIES FROM KASM IMAGE
 # =========================================================
 RUN rm -f \
     /etc/apt/sources.list.d/hashicorp.list \
@@ -16,7 +16,7 @@ RUN rm -f \
     2>/dev/null || true
 
 # =========================================================
-# SYSTEM PACKAGES
+# PACKAGES
 # =========================================================
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -25,7 +25,6 @@ RUN apt-get update && \
         wget \
         ca-certificates \
         gnupg \
-        supervisor \
         procps \
         iproute2 \
         net-tools \
@@ -35,18 +34,21 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # =========================================================
-# KASM USER - FULL SUDO
+# KASM USER
 # =========================================================
 RUN echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/kasm-user && \
     chmod 440 /etc/sudoers.d/kasm-user
 
 # =========================================================
-# BRAVE BROWSER
+# BRAVE
 # =========================================================
 RUN mkdir -p /etc/apt/keyrings && \
     curl -fsSLo /etc/apt/keyrings/brave-browser-archive-keyring.gpg \
-        https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" \
+        https://brave-browser-apt-release.s3.brave.com/brave-browser-apt-keyring.gpg || \
+    curl -fsSLo /etc/apt/keyrings/brave-browser-archive-keyring.gpg \
+        https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+
+RUN echo "deb [signed-by=/etc/apt/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" \
         > /etc/apt/sources.list.d/brave-browser-release.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends brave-browser && \
@@ -61,77 +63,46 @@ RUN curl -L \
     chmod +x /usr/local/bin/cloudflared
 
 # =========================================================
-# CLOUDFLARE TUNNEL TOKEN
+# CLOUDFLARE TOKEN
 # =========================================================
 ENV CF_TUNNEL_TOKEN="eyJhIjoiMGZhYWYyYzU1YzJjNmRiMzM4Yzk3ZDU1YTE4MmNiNTkiLCJ0IjoiZGUzNGEyYzYtMTFhNy00NjdjLWI5ZjMtMGUxYTdkYjA0M2ZhIiwicyI6IllqZGtZamMyTkdRdFpXSTJNaTAwWkRjNExXSTNZV1V0WXpZMll6SXlNemszTVRrMCJ9"
 
 # =========================================================
-# SUPERVISOR
+# START EVERYTHING
 # =========================================================
-RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor
-
-RUN cat > /etc/supervisor/conf.d/kasm-cloudflare.conf <<'EOF'
-[supervisord]
-nodaemon=true
-logfile=/dev/null
-pidfile=/var/run/supervisord.pid
-
-[program:kasm]
-command=/dockerstartup/kasm_default_profile.sh /dockerstartup/vnc_startup.sh /dockerstartup/kasm_startup.sh --wait
-directory=/home/kasm-user
-user=root
-priority=10
-autostart=true
-autorestart=true
-startsecs=10
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-stopasgroup=true
-killasgroup=true
-
-[program:cloudflared]
-command=/usr/local/bin/cloudflared tunnel --no-autoupdate run --token %(ENV_CF_TUNNEL_TOKEN)s
-user=root
-priority=20
-autostart=true
-autorestart=true
-startsecs=5
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-stopasgroup=true
-killasgroup=true
-EOF
-
-# =========================================================
-# START SCRIPT
-# =========================================================
-RUN cat > /usr/local/bin/start-all.sh <<'EOF'
+RUN cat > /usr/local/bin/start-kasm-cloudflare.sh <<'EOF'
 #!/bin/bash
 
-echo "================================================="
+set -e
+
+echo "=============================================="
 echo " ELMINYAWE KASM + CLOUDFLARE"
-echo "================================================="
+echo "=============================================="
 
-echo "[INFO] Running as:"
-id
+echo "[1] Starting Cloudflare Tunnel..."
 
-echo "[INFO] Starting Supervisor..."
+/usr/local/bin/cloudflared tunnel \
+    --no-autoupdate \
+    run \
+    --token "$CF_TUNNEL_TOKEN" &
 
-exec /usr/bin/supervisord \
-    -c /etc/supervisor/conf.d/kasm-cloudflare.conf
+CLOUDFLARED_PID=$!
+
+echo "[2] Cloudflared PID: $CLOUDFLARED_PID"
+
+echo "[3] Starting Kasm as ROOT..."
+
+exec /dockerstartup/kasm_default_profile.sh \
+    /dockerstartup/vnc_startup.sh \
+    /dockerstartup/kasm_startup.sh \
+    --wait
+
 EOF
 
-RUN chmod +x /usr/local/bin/start-all.sh
+RUN chmod +x /usr/local/bin/start-kasm-cloudflare.sh
 
-# =========================================================
-# RAILWAY
-# =========================================================
 USER root
 
 EXPOSE 6901
 
-ENTRYPOINT ["/usr/local/bin/start-all.sh"]
+ENTRYPOINT ["/usr/local/bin/start-kasm-cloudflare.sh"]
