@@ -57,12 +57,59 @@ ENV CF_TUNNEL_TOKEN="eyJhIjoiMGZhYWYyYzU1YzJjNmRiMzM4Yzk3ZDU1YTE4MmNiNTkiLCJ0Ijo
 
 RUN mkdir -p /etc/supervisor/conf.d /var/log/supervisor
 
+# Diagnostic script
+RUN cat > /usr/local/bin/diagnostic.sh <<'EOF'
+#!/bin/bash
+
+while true; do
+
+    {
+        echo
+        echo "=========================================="
+        echo "DIAGNOSTIC $(date)"
+        echo "=========================================="
+
+        echo
+        echo "===== LISTENING PORTS ====="
+        ss -lntp 2>&1
+
+        echo
+        echo "===== PORT 6901 ====="
+        ss -lntp 2>&1 | grep 6901 || echo "PORT 6901 NOT FOUND"
+
+        echo
+        echo "===== HTTPS LOCAL TEST ====="
+        curl -k -I --connect-timeout 5 https://127.0.0.1:6901 2>&1 || true
+
+        echo
+        echo "===== PROCESS CHECK ====="
+        ps aux | grep -E 'kasm|Xvnc|websockify|kasmvnc' | grep -v grep || true
+
+        echo
+        echo "===== CLOUDFLARED PROCESS ====="
+        ps aux | grep cloudflared | grep -v grep || true
+
+        echo
+        echo "=========================================="
+
+    } > /tmp/diagnostic.log 2>&1
+
+    cat /tmp/diagnostic.log
+
+    sleep 10
+
+done
+EOF
+
+RUN chmod +x /usr/local/bin/diagnostic.sh
+
 RUN cat > /etc/supervisor/conf.d/kasm-cloudflare.conf <<'EOF'
 [supervisord]
 nodaemon=true
 logfile=/var/log/supervisord.log
 pidfile=/var/run/supervisord.pid
 loglevel=info
+user=root
 
 [program:kasm]
 command=/dockerstartup/kasm_default_profile.sh /dockerstartup/vnc_startup.sh /dockerstartup/kasm_startup.sh --wait
@@ -73,8 +120,10 @@ autorestart=true
 startsecs=5
 startretries=20
 priority=10
-stdout_logfile=/var/log/kasm.log
-stderr_logfile=/var/log/kasm-error.log
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
 stopasgroup=true
 killasgroup=true
 
@@ -85,18 +134,23 @@ autorestart=true
 startsecs=5
 startretries=20
 priority=20
-stdout_logfile=/var/log/cloudflared.log
-stderr_logfile=/var/log/cloudflared-error.log
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
 stopasgroup=true
 killasgroup=true
 
 [program:diagnostic]
-command=/bin/bash -c "while true; do echo '===== KASM PORT CHECK ====='; ss -lntp | grep 6901 || true; echo '===== LOCAL HTTPS CHECK ====='; curl -k -s -o /dev/null -w 'HTTP: %%{http_code}\n' https://127.0.0.1:6901 || true; echo '===== CLOUDFLARED LAST LOGS ====='; tail -n 15 /var/log/cloudflared-error.log 2>/dev/null || true; echo '================================'; sleep 10; done"
+command=/usr/local/bin/diagnostic.sh
 autostart=true
 autorestart=true
+startsecs=1
 priority=30
 stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
 stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
 stopasgroup=true
 killasgroup=true
 EOF
